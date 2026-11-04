@@ -47,8 +47,9 @@ export function toPhone(q, lu) {
 
 // How far apart the two worlds may read the marks' spacing (m) before the marks are asked for again.
 export const MARK_TOL = 0.03;
-// Marks closer than this give a turn too shaky to use (a centimetre is 0.6° at 1 m).
-export const MARK_MIN = 0.8;
+// Marks closer than this give a turn too shaky to use. The doorway's two sides (the default line-up now, 60 cm to a metre
+// apart) are the shortest line this takes: a centimetre off at one of them is 1.2° of turn at 80 cm.
+export const MARK_MIN = 0.5;
 
 export function across(a, b) { return Math.hypot(a[0] - b[0], a[2] - b[2]); }
 
@@ -59,8 +60,8 @@ export function lineUpMarks(p1, p2, q1, q2) {
 	const cm = Math.abs(lu.widthErr) * 100;
 	const near = Math.min(across(p1, p2), across(q1, q2)) < MARK_MIN;
 	let why = "";
-	if (near) why = "The two marks are only " + (Math.min(across(p1, p2), across(q1, q2)) * 100).toFixed(0) + " cm apart: put them about two metres apart.";
-	else if (Math.abs(lu.widthErr) > MARK_TOL) why = "The phone read the marks " + cm.toFixed(0) + " cm " + (lu.widthErr > 0 ? "further apart" : "closer together") + " than the headset did (3 cm is the most).";
+	if (near) why = "The two sides are only " + (Math.min(across(p1, p2), across(q1, q2)) * 100).toFixed(0) + " cm apart: use the doorway's left side, then its right.";
+	else if (Math.abs(lu.widthErr) > MARK_TOL) why = "The phone read the doorway's two sides " + cm.toFixed(0) + " cm " + (lu.widthErr > 0 ? "further apart" : "closer together") + " than the headset did (3 cm is the most).";
 	return { lu, ok: why === "", gap: lu.widthErr, why };
 }
 

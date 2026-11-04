@@ -5,9 +5,10 @@
        headset over the home Wi-Fi (net/friend_server.gd, net/phone_link.gd), after Chrome's one "Allow".
      - The friend's page on the headset sends the phone here with the headset's address and the code after the #,
        which never leaves the phone.
-     - Line-up (card S15 round 2): two small things on the floor, which the phone taps and the headset touches with the
-       controller's tip, in the same order (lineup.js). Then a third, for the measure. Quick, less exact: tap both feet of
-       a doorway the headset's map knows, as in S15's first round.
+     - Line-up (card S15 round 2): you pick the room you're in, close its door, and tap the floor at the foot of the
+       doorway's left side, then its right; the headset touches the same two sides with the controller's tip (lineup.js).
+       Then a third spot, for the measure. Quick, less exact: tap both feet of the doorway where the headset's map has
+       them, as in S15's first round.
      - A tap shoots along the crosshair; the headset decides the hit.
      - With no AR (a desktop browser), "Preview" lines up on made-up taps instead, to check the rest. -->
 <html lang="en">
@@ -93,10 +94,10 @@ const $ = (id) => document.getElementById(id);
 const POSE_MS = 50;
 const hash = new URLSearchParams(location.hash.slice(1));
 let ws = null, scene = null, manAt = null, lu = null, preview = false;
-// How the phone is lining up: "marks" (two things on the floor, exact) or "doorway" (quick, less exact). `phase` is what
-// a tap does, as the headset says: "marks" and "third" take the floor point, "shoot" shoots, "waiting" does nothing.
-// `qMarks` and `qThird` are the headset's touches (its world); `first` says which mark is the first.
-let mode = "marks", phase = "marks", qMarks = null, qThird = null, first = "the one nearer the door";
+// How the phone is lining up: "marks" (the doorway's two sides, touched by the headset: exact) or "doorway" (the map's
+// doorway: quick, less exact). `phase` is what a tap does, as the headset says: "marks" and "third" take the floor point,
+// "shoot" shoots, "waiting" does nothing. `qMarks` and `qThird` are the headset's touches (its world).
+let mode = "marks", phase = "marks", qMarks = null, qThird = null;
 let taps = [], file = null, glb = null, shotT = new Map(), lastPose = 0, frames = 0, fpsAt = 0, fps = 0, rtt = null;
 // What Chrome allowed, line by line: shown here and sent to the headset.
 const said = [];
@@ -176,14 +177,14 @@ function heard(data) {
 	}
 	if (m.note) say(m.note);
 	if (m.rtt !== undefined) rtt = m.rtt;
-	if (m.scene) { scene = m.scene; first = scene.first || first; doors(); }
+	if (m.scene) { scene = m.scene; doors(); }
 	if (m.marks) marksFromHeadset(m.marks);
 	if (m.phase) {
 		phase = m.phase.name;
 		if (m.phase.q) qThird = m.phase.q;
 		if (m.phase.say) say(m.phase.say);
 	}
-	if (m.redo) { if (lu || taps.length) lineUpAgain(); say(m.redo.why); }
+	if (m.redo) { if (lu || taps.length) lineUpAgain("headset"); say(m.redo.why); }
 	if (m.man) setMan(m.man);
 	if (m.file) { file = { name: m.file, size: m.size, buf: new Uint8Array(m.size), got: 0, t0: performance.now() }; $("why").textContent = "Loading the man…"; }
 	if (m.shot) shotBack(m.shot);
@@ -272,7 +273,7 @@ function doors() {
 	scene.doors.forEach((d, k) => {
 		const o = document.createElement("option");
 		o.value = k;
-		o.textContent = d.stand + " → " + d.into;
+		o.textContent = "I'm in the " + d.stand + " (its door into the " + d.into + ")";
 		sel.appendChild(o);
 	});
 	if (scene.pick !== undefined) sel.value = scene.pick;
@@ -281,9 +282,17 @@ function doors() {
 const door = () => scene.doors[+$("door").value];
 
 function showMode() {
-	$("door").style.display = mode === "doorway" ? "" : "none";
-	$("mode").textContent = mode === "marks" ? "Quick: a doorway" : "Use two marks";
+	$("mode").textContent = mode === "marks" ? "Quick: the map's doorway" : "Use the touched sides";
 	$("mode").style.display = preview ? "none" : "";
+}
+
+// The doorway's sides in words, the same ones the headset's cards use: left and right as you face the door from inside.
+const sideWords = (n) => n === 0 ? "the doorway's left side, as you face the door from inside the " + door().stand : "the doorway's right side";
+
+// The headset needs to know which room you're in, to say it on its cards and to check the sides' spacing.
+function sendDoor(again) {
+	const d = door();
+	send({ door: { i: d.i, k: +$("door").value, stand: d.stand, into: d.into, mode, again: !!again } });
 }
 
 // --- AR --------------------------------------------------------------------------------------------------------
@@ -312,7 +321,7 @@ async function startAR() {
 	session.addEventListener("select", tapped);
 	session.addEventListener("end", () => { session = null; $("start").style.display = "block"; $("overlay").style.display = "none"; renderer.domElement.style.display = "none"; });
 	showMode();
-	lineUpAgain(true);
+	lineUpAgain("start");
 	renderer.setAnimationLoop(frame);
 }
 
@@ -321,16 +330,16 @@ for (const b of document.querySelectorAll("#tools > *")) b.addEventListener("bef
 
 // The words for the next tap in the marks line-up.
 const marksSay = (n) => n === 0
-	? "Put the cross on the first mark, " + first + ", and tap. (Sweep the phone slowly over the floor first if there's no ring.)"
-	: "Now the second mark: put the cross on it and tap.";
+	? "Close the door of the " + door().stand + ". Put the cross on the floor at the foot of " + sideWords(0) + ", and tap. (Sweep the phone slowly over the floor first if there's no ring.)"
+	: "Now the foot of the doorway's right side: put the cross there and tap.";
 
-// Start the line-up over. `quiet`: the first time, nothing to tell the headset.
-function lineUpAgain(quiet) {
+// Start the line-up over. `how`: "start" (the AR just began), "user" (a button or the room changed), "headset" (it asked).
+function lineUpAgain(how) {
 	taps = [];
 	lu = null;
 	phase = "marks";
 	world.visible = false;
-	if (!quiet) send({ again: { mode } });
+	if (how !== "headset") sendDoor(how === "user");
 	if (mode === "marks") say(marksSay(0));
 	else say(door().words + " Quick, less exact. Point the ring at the floor at the doorway's left foot and tap. (Sweep the phone slowly over the floor first if there's no ring.)");
 }
@@ -359,7 +368,7 @@ function tapped() {
 	}
 	const p = floorPoint();
 	if (!p) { say("No floor found yet: sweep the phone slowly over the floor until the ring shows."); return; }
-	if (mode === "marks" && taps.length >= 2) { say("Both marks tapped. Waiting for the headset: touch the two marks with the controller and press A."); return; }
+	if (mode === "marks" && taps.length >= 2) { say("Both sides tapped. Waiting for the headset: touch the doorway's two sides with the controller and press A."); return; }
 	taps.push(p);
 	if (mode === "doorway") {
 		if (taps.length === 1) { say("Now the doorway's right foot: tap the floor there."); return; }
@@ -374,19 +383,18 @@ function tapped() {
 // The headset's two touches came (again): with both taps in hand, line up on them.
 function marksFromHeadset(m) {
 	qMarks = m.q;
-	if (m.first) first = m.first;
 	if (mode !== "marks") return;
 	if (taps.length >= 2) { lu = null; tryMarks(); }
-	else if (!lu) say(taps.length === 1 ? marksSay(1) : "The headset has the marks. " + marksSay(0));
+	else if (!lu) say(taps.length === 1 ? marksSay(1) : "The headset has both sides. " + marksSay(0));
 }
 
 function tryMarks() {
 	if (mode !== "marks" || lu || taps.length < 2) return;
-	if (!qMarks) { say("Both marks tapped. Waiting for the headset: touch the two marks with the controller and press A."); return; }
+	if (!qMarks) { say("Both sides tapped. Waiting for the headset: touch the doorway's two sides with the controller and press A."); return; }
 	const r = lineUpMarks(taps[0], taps[1], qMarks[0], qMarks[1]);
 	if (!r.ok) {
 		log("marks: " + r.why);
-		say(r.why + " Tap them again, and touch them again in the headset.");
+		say(r.why + " Tap the two sides again, and touch them again in the headset.");
 		taps = [];
 		send({ redo: { why: r.why, gap: r.gap } });
 		return;
@@ -412,7 +420,7 @@ function lined(res, how, fix) {
 		feet.add(f);
 	}
 	const cm = (lu.widthErr * 100).toFixed(1);
-	const what = how === "marks" ? "the two marks: the phone read them " + cm + " cm apart from the headset" : (d.stand + " → " + d.into + ": the taps' spacing " + cm + " cm off the doorway's (quick, less exact)");
+	const what = how === "marks" ? "the doorway's two sides: the phone read them " + cm + " cm apart from the headset's" : (d.stand + " → " + d.into + ": the taps' spacing " + cm + " cm off the doorway's (quick, less exact)");
 	log("lined up on " + what + (lu.swapped || fix ? " (the other order)" : ""));
 	send({ lined: { mode: how, door: d ? d.i : -1, stand: d ? d.stand : "", into: d ? d.into : "", yaw: lu.yaw, move: lu.move, width_err: lu.widthErr, swapped: !!(lu.swapped || fix), fix: !!fix, preview } });
 	if (!fix) say("Lined up. Waiting for the headset: it asks for the third mark next.");
@@ -470,7 +478,7 @@ function frame(t, xr) {
 		send({ fps });
 	}
 	if (lu && now - lastPose >= POSE_MS) { lastPose = now; send({ pose: inQuest(viewMatrix) }); }
-	$("state").textContent = lu ? "Lined up" : (mode === "marks" ? (taps.length ? "Tap the second mark" : "Tap the first mark") : (taps.length ? "Tap the right foot" : "Tap the left foot"));
+	$("state").textContent = lu ? "Lined up" : (taps.length ? "Tap the right foot" : "Tap the left foot");
 	$("nums").textContent = fps + " fps" + (rtt !== null ? " · " + Math.round(rtt) + " ms" : "");
 	renderer.render(three, camera);
 }
@@ -550,9 +558,9 @@ function startPreview() {
 
 $("connect").onclick = connect;
 $("ar").onclick = startAR;
-$("again").onclick = () => preview ? startPreview() : lineUpAgain();
-$("mode").onclick = () => { mode = mode === "marks" ? "doorway" : "marks"; showMode(); lineUpAgain(); };
-$("door").onchange = () => { if (!preview) lineUpAgain(); };
+$("again").onclick = () => preview ? startPreview() : lineUpAgain("user");
+$("mode").onclick = () => { mode = mode === "marks" ? "doorway" : "marks"; showMode(); lineUpAgain("user"); };
+$("door").onchange = () => { if (!preview) lineUpAgain("user"); };
 $("walls").onclick = () => {
 	wallsShown = !wallsShown;
 	for (const b of occ.children) b.material = wallsShown ? seen : hide;
